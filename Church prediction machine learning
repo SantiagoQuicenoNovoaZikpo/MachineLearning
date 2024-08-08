@@ -1,0 +1,130 @@
+# Required Libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import confusion_matrix, roc_auc_score, roc_curve, classification_report, precision_recall_curve
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.preprocessing import RobustScaler
+from xgboost import XGBClassifier
+import optuna
+from optuna import Trial
+from optuna.samplers import TPESampler
+from collections import Counter
+
+# Load Dataset
+df = pd.read_csv("D:\\Desktop\\Programacion Basica\\Data Science\\M6\\Clase_03\\Datasets\\churn_prediction.csv")
+
+# Display dataset shape
+print(f"Dataset shape: {df.shape}")
+
+# Visualize target variable
+sns.countplot(x='churn', data=df)
+plt.title('Churn Distribution')
+plt.show()
+
+# Display city distribution
+print(df['city'].value_counts())
+
+# Check for missing values
+print(df.isnull().sum())
+
+# Handle missing values
+df.replace({'gender': {'Male': 1, 'Female': 0}}, inplace=True)
+df['gender'] = df['gender'].fillna(-1)
+df['dependents'] = df['dependents'].fillna(0)
+df['occupation'] = df['occupation'].fillna('self_employed')
+df['city'] = df['city'].fillna(1020.0)
+
+# Drop unnecessary columns
+df = df.drop(['last_transaction'], axis=1)
+
+# Convert categorical variables to dummy variables
+df = pd.get_dummies(df, dtype=int)
+
+# Define features and target variable
+X = df.drop(['customer_id', 'churn', 'branch_code'], axis=1)
+y = df['churn']
+
+# Split the dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=2024, stratify=y)
+
+# Scale features
+scaler = RobustScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+# Train and evaluate models
+models = [
+    ('Logistic Regression', LogisticRegression()),
+    ('Decision Tree', DecisionTreeClassifier()),
+    ('Random Forest', RandomForestClassifier()),
+    ('XGBoost', XGBClassifier())
+]
+
+results = []
+names = []
+
+for name, model in models:
+    kfold = StratifiedKFold(n_splits=3, random_state=2024, shuffle=True)
+    cv_scores = cross_val_score(model, X_train, y_train, cv=kfold, scoring='roc_auc')
+    names.append(name)
+    results.append(cv_scores)
+    print(f"{name}: Mean ROC AUC = {cv_scores.mean()}")
+
+# Train RandomForest model
+model = RandomForestClassifier(random_state=2024)
+model.fit(X_train, y_train)
+
+# Predict and evaluate
+y_pred = model.predict(X_test)
+y_pred_prob = model.predict_proba(X_test)[:, 1]
+auc = roc_auc_score(y_test, y_pred_prob)
+
+print(f"Random Forest ROC AUC: {auc}")
+print("Classification Report:")
+print(classification_report(y_test, y_pred))
+
+conf_matrix = confusion_matrix(y_test, y_pred)
+print("Confusion Matrix:")
+print(conf_matrix)
+
+# Hyperparameter optimization using Optuna
+def objective(trial: Trial):
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 50, 500),
+        'max_depth': trial.suggest_int('max_depth', 3, 15)
+    }
+    model = RandomForestClassifier(**params)
+    return cross_val_score(model, X_train, y_train, cv=4, scoring='roc_auc').mean()
+
+study = optuna.create_study(direction='maximize', sampler=TPESampler())
+study.optimize(objective, n_trials=50)
+
+print("Best Parameters:")
+print(study.best_params)
+print("Best Value:")
+print(study.best_value)
+print("Best Trial:")
+print(study.best_trial)
+
+# Train and evaluate optimized RandomForest model
+rf_params = study.best_params
+rf_model = RandomForestClassifier(**rf_params)
+rf_model.fit(X_train, y_train)
+
+y_pred = rf_model.predict(X_test)
+y_pred_prob = rf_model.predict_proba(X_test)[:, 1]
+auc = roc_auc_score(y_test, y_pred_prob)
+
+print(f"Optimized Random Forest ROC AUC: {auc}")
+print("Classification Report:")
+print(classification_report(y_test, y_pred))
+
+conf_matrix = confusion_matrix(y_test, y_pred)
+print("Confusion Matrix:")
+print(conf_matrix)
